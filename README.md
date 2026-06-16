@@ -1,10 +1,10 @@
 # DSC2025 ViHallu - Collaborative NLP Framework
 
-## 1) Mục tiêu framework
-- Chạy được ngay trên dataset có sẵn trong folder.
-- So sánh nhiều hướng: Classical, Transformer, Hybrid.
+## 1) Framework Objectives
+- Executable right out-of-the-box on the dataset provided in the folder.
+- Facilitate comparison across multiple approaches: Classical, Transformer, and Hybrid.
 
-## 2) Cấu trúc thư mục
+## 2) Directory Structure
 ```text
 .
 ├─ src/vihallu/
@@ -29,29 +29,29 @@
 └─ vihallu-public-test.csv
 ```
 
-## 3) Thiết kế baseline -> SOTA-ish
+## 3) Design: From Baseline to SOTA-ish
 
 ### A. Classical baseline
 - Input serialize theo paper: `[CLS] context [SEP] prompt [SEP] response [SEP]`
 - TF-IDF + Logistic Regression
-- Nhanh, dễ debug, tạo baseline đầu tiên để so sánh.
+- Fast and easy to debug; serves as the initial baseline for comparison.
 
-### B. Transformer baseline (PhoBERT hoặc mBERT)
-- Fine-tune mô hình encoder cho 3 lớp: `no`, `intrinsic`, `extrinsic`
-- Loss: CrossEntropy, metric chính: macro-F1.
+### B. Transformer baseline (PhoBERT or mBERT)
+- Fine-tune the encoder model for 3 classes: `no`, `intrinsic`, `extrinsic`
+- Loss: CrossEntropy, Primary metric : macro-F1.
 
 ### C. Hybrid (điểm "mới nhẹ")
-- Kết hợp xác suất từ Classical + Transformer.
-- Thêm rule-based evidence score (overlap, contradiction cue, unsupported cue).
-- Tối ưu trọng số ensemble trên validation bằng SLSQP (ý tưởng gần hướng top đội thi).
+- Combine prediction probabilities from Classical + Transformer models.
+- Incorporate rule-based evidence scores (e.g., token overlap, contradiction cues, unsupported cues).
+- Optimize ensemble weights on the validation set using SLSQP (inspired by top-performing competitive teams).
 
-## 4) Setup nhanh
+## 4) Quick Setup 
 ```bash
 pip install -r requirements.txt
 pip install -e .
 ```
 
-## 5) Cách chạy
+## 5) How to Run
 
 ### 5.1 Classical
 ```bash
@@ -81,21 +81,21 @@ python scripts/predict.py \
   --output_path outputs/submission_public.csv
 ```
 
-## 6) Chia việc 
+## 6) Task Division
 - Person A: data pipeline + classical + error analysis.
 - Person B: transformer fine-tuning + prompt/noise augmentation.
-- Cùng làm: hybrid stacking + báo cáo so sánh ablation.
+- Cùng làm: Hybrid stacking + ablation study report.
 
 ## 7) Roadmap progress
 1. Baseline classical 
 2. PhoBERT fine-tune
 3. Feature engineering + calibration
 4. Ensemble/hybrid + ablation 
-5. Error analysis theo 3 loại hallucination + report
+5. Error analysis across the 3 hallucination types + final report
 
-## 8) Ý tưởng mới nhẹ
-- Dynamic weight theo prompt type noise/adversarial (ước lượng từ đặc trưng prompt).
-- Evidence consistency score ở mức token overlap + negation conflict.
-- Confidence-aware fallback: nếu transformer entropy cao thì tăng trọng số classical/rule.
+## 8) Novel Ideas & Enhancements
+- Dynamic weighting based on prompt noise/adversarial types (estimated from prompt features).
+- Evidence consistency scoring at the token overlap and negation conflict level.
+- Confidence-aware fallback: If the transformer's entropy is high, dynamically increase the weight of the classical/rule-based predictions.
 
-Dùng notebook `basic_classifier.ipynb` để thử nhanh ý tưởng trước khi chuẩn hóa vào scripts.
+Note: Use the `basic_classifier.ipynb` notebook to quickly prototype ideas before standardizing them into the main scripts.

@@ -15,7 +15,7 @@ class DataBundle:
     valid: pd.DataFrame
 
 
-def read_train_csv(path: str) -> pd.DataFrame:
+def read_train_csv(path: str, text_mode: str = "raw") -> pd.DataFrame:
     df = pd.read_csv(path)
     required = [ID_COLUMN, *TEXT_COLUMNS, TRAIN_LABEL_COLUMN]
     missing = [col for col in required if col not in df.columns]
@@ -32,12 +32,13 @@ def read_train_csv(path: str) -> pd.DataFrame:
 
     df["label_id"] = df[TRAIN_LABEL_COLUMN].map(LABEL2ID)
     df["serialized_text"] = df.apply(
-        lambda row: serialize_triplet(row["context"], row["prompt"], row["response"]), axis=1
+        lambda row: serialize_triplet(row["context"], row["prompt"], row["response"], text_mode=text_mode),
+        axis=1,
     )
     return df
 
 
-def read_test_csv(path: str) -> pd.DataFrame:
+def read_test_csv(path: str, text_mode: str = "raw") -> pd.DataFrame:
     df = pd.read_csv(path)
     required = [ID_COLUMN, *TEXT_COLUMNS]
     missing = [col for col in required if col not in df.columns]
@@ -51,9 +52,27 @@ def read_test_csv(path: str) -> pd.DataFrame:
         df[TEST_LABEL_COLUMN] = ""
 
     df["serialized_text"] = df.apply(
-        lambda row: serialize_triplet(row["context"], row["prompt"], row["response"]), axis=1
+        lambda row: serialize_triplet(row["context"], row["prompt"], row["response"], text_mode=text_mode),
+        axis=1,
     )
     return df
+
+
+def stratified_sample(df: pd.DataFrame, sample_size: int, seed: int = 42) -> pd.DataFrame:
+    if sample_size <= 0 or sample_size >= len(df):
+        return df.reset_index(drop=True)
+
+    num_labels = df["label_id"].nunique()
+    if sample_size < num_labels:
+        raise ValueError(f"sample_size must be at least {num_labels} for stratified sampling.")
+
+    _, sample_df = train_test_split(
+        df,
+        test_size=sample_size,
+        random_state=seed,
+        stratify=df["label_id"],
+    )
+    return sample_df.reset_index(drop=True)
 
 
 def stratified_split(df: pd.DataFrame, valid_size: float = 0.15, seed: int = 42) -> DataBundle:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -8,6 +9,11 @@ import numpy as np
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
+
+os.environ.setdefault("HF_HOME", str(ROOT_DIR / "outputs" / "hf_cache"))
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+os.environ.setdefault("USE_TF", "0")
+
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
@@ -29,10 +35,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--classical_dir", type=str, default="outputs/classical")
     parser.add_argument("--transformer_dir", type=str, default="outputs/transformer")
     parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--max_length", type=int, default=None)
     return parser.parse_args()
 
 
-def predict_with_transformer(df, model_dir: str, batch_size: int) -> np.ndarray:
+def load_transformer_metadata(model_dir: str) -> dict:
+    metadata_path = Path(model_dir) / "model_metadata.json"
+    if metadata_path.exists():
+        return load_json(metadata_path)
+    return {"max_length": 256, "text_mode": "raw"}
+
+
+def predict_with_transformer(df, model_dir: str, batch_size: int, max_length: int) -> np.ndarray:
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
     model = AutoModelForSequenceClassification.from_pretrained(model_dir)
 
@@ -40,7 +54,7 @@ def predict_with_transformer(df, model_dir: str, batch_size: int) -> np.ndarray:
         df["serialized_text"].tolist(),
         truncation=True,
         padding=True,
-        max_length=256,
+        max_length=max_length,
         return_tensors="pt",
     )
 
@@ -64,21 +78,34 @@ def predict_with_transformer(df, model_dir: str, batch_size: int) -> np.ndarray:
 
 def main() -> None:
     args = parse_args()
-    df = read_test_csv(args.test_path)
+    df = read_test_csv(args.test_path, text_mode="raw")
 
     if args.model_type == "classical":
         model = load_joblib(Path(args.model_dir) / "classical_model.joblib")
         pred = model.predict(df["serialized_text"].tolist())
 
     elif args.model_type == "transformer":
-        proba = predict_with_transformer(df, args.model_dir, args.batch_size)
+        metadata = load_transformer_metadata(args.model_dir)
+        text_mode = str(metadata.get("text_mode", "raw"))
+        max_length = args.max_length or int(metadata.get("max_length", 256))
+        transformer_df = df if text_mode == "raw" else read_test_csv(args.test_path, text_mode=text_mode)
+        proba = predict_with_transformer(transformer_df, args.model_dir, args.batch_size, max_length)
         pred = np.argmax(proba, axis=1)
 
     else:
         classical_model = load_joblib(Path(args.classical_dir) / "classical_model.joblib")
         proba_classical = classical_model.predict_proba(df["serialized_text"].tolist())
 
-        proba_transformer = predict_with_transformer(df, args.transformer_dir, args.batch_size)
+        metadata = load_transformer_metadata(args.transformer_dir)
+        text_mode = str(metadata.get("text_mode", "raw"))
+        max_length = args.max_length or int(metadata.get("max_length", 256))
+        transformer_df = df if text_mode == "raw" else read_test_csv(args.test_path, text_mode=text_mode)
+        proba_transformer = predict_with_transformer(
+            transformer_df,
+            args.transformer_dir,
+            args.batch_size,
+            max_length,
+        )
         proba_rule = build_rule_based_proba(build_hybrid_features(df))
 
         weights_dict = load_json(Path(args.model_dir) / "hybrid_weights.json")
