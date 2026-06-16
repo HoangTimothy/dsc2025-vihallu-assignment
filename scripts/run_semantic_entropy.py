@@ -93,6 +93,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--similarity_threshold", type=float, default=0.8, help="Cosine similarity threshold for semantic clustering.")
     parser.add_argument("--sample_size", type=int, default=0, help="Number of prompts to sample (0 to process all).")
     parser.add_argument("--max_new_tokens", type=int, default=64, help="Max new tokens to generate per response.")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size B for processing prompts in parallel.")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu", "mps"], help="Device to run inference on.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for generation.")
     return parser.parse_args()
@@ -178,23 +179,31 @@ def main() -> None:
 
     # 5. Generate and Compute Semantic Entropy
     results = []
-    print(f"[*] Starting Semantic Entropy generation and clustering (M={args.num_samples} samples per query)...")
+    print(f"[*] Starting Semantic Entropy generation and clustering (M={args.num_samples} samples per query, Batch Size={args.batch_size})...")
     
-    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Calculating Semantic Entropy"):
-        context = str(row.get("context", ""))
-        prompt = str(row.get("prompt", ""))
-        orig_response = str(row.get("response", ""))
-        true_label = str(row.get("label", "unknown"))
-
-        # Build prompt for LLM generation
-        # We construct a clean QA template
-        input_text = f"Context: {context}\nQuestion: {prompt}\nAnswer the question based on the context. Keep your answer brief.\nAnswer:"
+    # Setup padding side for batched generation
+    tokenizer.padding_side = "left"
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
         
-        # Tokenize prompt
-        inputs = tokenizer(input_text, return_tensors="pt").to(device)
+    num_prompts = len(df)
+    batch_size = args.batch_size
+    pbar = tqdm(total=num_prompts, desc="Calculating Semantic Entropy")
+    
+    for i in range(0, num_prompts, batch_size):
+        batch_df = df.iloc[i : i + batch_size]
+        prompts = []
+        for _, row in batch_df.iterrows():
+            context = str(row.get("context", ""))
+            prompt = str(row.get("prompt", ""))
+            input_text = f"Context: {context}\nQuestion: {prompt}\nAnswer the question based on the context. Keep your answer brief.\nAnswer:"
+            prompts.append(input_text)
+            
+        # Tokenize batch
+        inputs = tokenizer(prompts, padding=True, truncation=True, return_tensors="pt").to(device)
         input_len = inputs["input_ids"].shape[1]
-
-        # Generate M samples in parallel with high-temperature sampling
+        
+        # Generate M samples for each prompt in parallel
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
@@ -206,31 +215,42 @@ def main() -> None:
                 top_p=0.95,
                 num_return_sequences=args.num_samples,
             )
-        generated_responses = []
-        for out in outputs:
-            # Decode only the generated part
-            gen_tokens = out[input_len:]
-            gen_text = tokenizer.decode(gen_tokens, skip_special_tokens=True).strip()
-            if not gen_text:
-                gen_text = " "
-            generated_responses.append(gen_text)
-
-        # Compute Semantic Entropy using the utility from vihallu
-        entropy = compute_semantic_entropy(
-            responses=generated_responses,
-            semantic_model=encoder,
-            similarity_threshold=args.similarity_threshold
-        )
-
-        results.append({
-            "id": row.get("id", idx),
-            "context": context,
-            "prompt": prompt,
-            "original_response": orig_response,
-            "true_label": true_label,
-            "generated_responses": generated_responses,
-            "semantic_entropy": float(entropy)
-        })
+            
+        # Group outputs by prompt
+        for prompt_idx, (_, row) in enumerate(batch_df.iterrows()):
+            start_idx = prompt_idx * args.num_samples
+            end_idx = start_idx + args.num_samples
+            
+            generated_responses = []
+            for out_idx in range(start_idx, end_idx):
+                out = outputs[out_idx]
+                # Extract only the generated tokens (slicing padding + prompt length)
+                gen_tokens = out[input_len:]
+                gen_text = tokenizer.decode(gen_tokens, skip_special_tokens=True).strip()
+                if not gen_text:
+                    gen_text = " "
+                generated_responses.append(gen_text)
+                
+            # Compute Semantic Entropy
+            entropy = compute_semantic_entropy(
+                responses=generated_responses,
+                semantic_model=encoder,
+                similarity_threshold=args.similarity_threshold
+            )
+            
+            results.append({
+                "id": row.get("id", i + prompt_idx),
+                "context": str(row.get("context", "")),
+                "prompt": str(row.get("prompt", "")),
+                "original_response": str(row.get("response", "")),
+                "true_label": str(row.get("label", "unknown")),
+                "generated_responses": generated_responses,
+                "semantic_entropy": float(entropy)
+            })
+            
+        pbar.update(len(batch_df))
+        
+    pbar.close()
 
     # 6. Save results
     results_df = pd.DataFrame(results)
