@@ -84,6 +84,14 @@ class TransformerHallucinationModel:
         macro_f1 = f1_score(labels, preds, average="macro")
         return {"macro_f1": float(macro_f1)}
 
+    def _trainer_tokenizer_kwargs(self) -> dict[str, object]:
+        trainer_params = inspect.signature(Trainer.__init__).parameters
+        if "processing_class" in trainer_params:
+            return {"processing_class": self.tokenizer}
+        if "tokenizer" in trainer_params:
+            return {"tokenizer": self.tokenizer}
+        return {}
+
     def fit(self, train_df: pd.DataFrame, valid_df: pd.DataFrame, output_dir: str) -> Trainer:
         train_ds = self._tokenize(self._to_dataset(train_df, with_label=True))
         valid_ds = self._tokenize(self._to_dataset(valid_df, with_label=True))
@@ -118,9 +126,9 @@ class TransformerHallucinationModel:
             args=args,
             train_dataset=train_ds,
             eval_dataset=valid_ds,
-            tokenizer=self.tokenizer,
             data_collator=DataCollatorWithPadding(self.tokenizer),
             compute_metrics=self._compute_metrics,
+            **self._trainer_tokenizer_kwargs(),
         )
 
         trainer.train()
@@ -138,8 +146,8 @@ class TransformerHallucinationModel:
         trainer = Trainer(
             model=self.model,
             args=args,
-            tokenizer=self.tokenizer,
             data_collator=DataCollatorWithPadding(self.tokenizer),
+            **self._trainer_tokenizer_kwargs(),
         )
         outputs = trainer.predict(dataset)
         logits = outputs.predictions
