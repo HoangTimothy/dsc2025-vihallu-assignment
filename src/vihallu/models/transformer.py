@@ -48,6 +48,17 @@ def resolve_text_mode(model_name: str, text_mode: str = "auto") -> str:
     return "word_segmented" if "phobert" in model_name.lower() else "raw"
 
 
+def get_supported_max_length(model_config) -> int | None:
+    max_positions = getattr(model_config, "max_position_embeddings", None)
+    if max_positions is None:
+        return None
+
+    model_type = str(getattr(model_config, "model_type", "")).lower()
+    if model_type in {"roberta", "xlm-roberta"}:
+        return int(max_positions) - 2
+    return int(max_positions)
+
+
 class TransformerHallucinationModel:
     def __init__(self, config: TransformerConfig) -> None:
         self.config = config
@@ -58,6 +69,13 @@ class TransformerHallucinationModel:
             id2label=ID2LABEL,
             label2id=LABEL2ID,
         )
+        supported_max_length = get_supported_max_length(self.model.config)
+        if supported_max_length is not None and config.max_length > supported_max_length:
+            raise ValueError(
+                f"{config.model_name} supports max_length <= {supported_max_length} "
+                f"(max_position_embeddings={self.model.config.max_position_embeddings}), "
+                f"but got max_length={config.max_length}."
+            )
 
     def _to_dataset(self, df: pd.DataFrame, with_label: bool = True) -> Dataset:
         payload = {

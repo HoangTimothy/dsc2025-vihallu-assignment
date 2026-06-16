@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -10,11 +11,17 @@ from typing import Any
 
 import pandas as pd
 
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+os.environ.setdefault("USE_TF", "0")
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from transformers import AutoConfig
+
+from vihallu.models.transformer import get_supported_max_length
 from vihallu.utils.io_utils import ensure_dir, load_json, save_json
 
 
@@ -105,6 +112,11 @@ def build_train_command(args: argparse.Namespace, model_name: str, max_length: i
     return cmd
 
 
+def get_model_supported_max_length(model_name: str) -> int | None:
+    config = AutoConfig.from_pretrained(model_name)
+    return get_supported_max_length(config)
+
+
 def main() -> None:
     args = parse_args()
     output_dir = ensure_dir(args.output_dir)
@@ -117,6 +129,7 @@ def main() -> None:
             current_run_name = run_name(model_name, max_length)
             run_dir = ensure_dir(output_dir / current_run_name)
             scores_path = run_dir / "scores.json"
+            supported_max_length = get_model_supported_max_length(model_name)
 
             started = time.perf_counter()
             row: dict[str, Any] = {
@@ -131,6 +144,20 @@ def main() -> None:
             write_summary(rows, output_dir)
 
             try:
+                if supported_max_length is not None and max_length > supported_max_length:
+                    row.update(
+                        {
+                            "status": "unsupported",
+                            "error": (
+                                f"{model_name} supports max_length <= {supported_max_length}; "
+                                f"requested {max_length}."
+                            ),
+                            "elapsed_minutes": 0.0,
+                        }
+                    )
+                    print(f"[benchmark] unsupported {current_run_name}: {row['error']}")
+                    continue
+
                 if args.skip_done and scores_path.exists():
                     scores = load_json(scores_path)
                     metadata_path = run_dir / "model_metadata.json"
