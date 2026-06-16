@@ -92,7 +92,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.7, help="LLM temperature for sampling (>= 0.7 is recommended).")
     parser.add_argument("--similarity_threshold", type=float, default=0.8, help="Cosine similarity threshold for semantic clustering.")
     parser.add_argument("--sample_size", type=int, default=0, help="Number of prompts to sample (0 to process all).")
-    parser.add_argument("--max_new_tokens", type=int, default=128, help="Max new tokens to generate per response.")
+    parser.add_argument("--max_new_tokens", type=int, default=64, help="Max new tokens to generate per response.")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu", "mps"], help="Device to run inference on.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for generation.")
     return parser.parse_args()
@@ -159,13 +159,17 @@ def main() -> None:
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
             
-        model = AutoModelForCausalLM.from_pretrained(
-            args.llm_name,
-            device_map=device if device != "cpu" else None,
-            torch_dtype=torch_dtype,
-        )
-        if device == "cpu":
-            model = model.to("cpu")
+        if device in ["cuda", "mps"]:
+            model = AutoModelForCausalLM.from_pretrained(
+                args.llm_name,
+                device_map="auto",
+                torch_dtype=torch_dtype,
+            )
+        else:
+            model = AutoModelForCausalLM.from_pretrained(
+                args.llm_name,
+                torch_dtype=torch_dtype,
+            ).to(device)
         print(f"[*] Generative model loaded successfully in {time.time() - start_time:.2f}s")
     except Exception as e:
         print(f"[Error] Failed to load LLM model {args.llm_name}: {e}")
@@ -190,23 +194,23 @@ def main() -> None:
         inputs = tokenizer(input_text, return_tensors="pt").to(device)
         input_len = inputs["input_ids"].shape[1]
 
-        # Generate M samples with high-temperature sampling
+        # Generate M samples in parallel with high-temperature sampling
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                do_sample=True,
+                temperature=args.temperature,
+                max_new_tokens=args.max_new_tokens,
+                pad_token_id=tokenizer.pad_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+                top_p=0.95,
+                num_return_sequences=args.num_samples,
+            )
         generated_responses = []
-        for _ in range(args.num_samples):
-            with torch.no_grad():
-                outputs = model.generate(
-                    **inputs,
-                    do_sample=True,
-                    temperature=args.temperature,
-                    max_new_tokens=args.max_new_tokens,
-                    pad_token_id=tokenizer.pad_token_id,
-                    eos_token_id=tokenizer.eos_token_id,
-                    top_p=0.95,
-                )
+        for out in outputs:
             # Decode only the generated part
-            gen_tokens = outputs[0][input_len:]
+            gen_tokens = out[input_len:]
             gen_text = tokenizer.decode(gen_tokens, skip_special_tokens=True).strip()
-            # If generation is empty, fall back to a space to avoid breaking encoder
             if not gen_text:
                 gen_text = " "
             generated_responses.append(gen_text)
