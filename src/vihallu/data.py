@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -15,8 +16,33 @@ class DataBundle:
     valid: pd.DataFrame
 
 
-def read_train_csv(path: str, text_mode: str = "raw") -> pd.DataFrame:
-    df = pd.read_csv(path)
+def resolve_data_path(path: str | Path) -> Path:
+    input_path = Path(path)
+    if input_path.exists():
+        return input_path
+
+    tried = [input_path]
+    if not input_path.is_absolute():
+        kaggle_input = Path("/kaggle/input")
+        candidates = [
+            kaggle_input / "vihallu" / input_path.name,
+            kaggle_input / input_path.name,
+        ]
+        if kaggle_input.exists():
+            candidates.extend(sorted(kaggle_input.rglob(input_path.name)))
+
+        for candidate in candidates:
+            if candidate not in tried:
+                tried.append(candidate)
+            if candidate.exists():
+                return candidate
+
+    tried_text = "\n".join(f"  - {candidate}" for candidate in tried)
+    raise FileNotFoundError(f"Could not find data file '{path}'. Tried:\n{tried_text}")
+
+
+def read_train_csv(path: str | Path, text_mode: str = "raw") -> pd.DataFrame:
+    df = pd.read_csv(resolve_data_path(path))
     required = [ID_COLUMN, *TEXT_COLUMNS, TRAIN_LABEL_COLUMN]
     missing = [col for col in required if col not in df.columns]
     if missing:
@@ -38,8 +64,8 @@ def read_train_csv(path: str, text_mode: str = "raw") -> pd.DataFrame:
     return df
 
 
-def read_test_csv(path: str, text_mode: str = "raw") -> pd.DataFrame:
-    df = pd.read_csv(path)
+def read_test_csv(path: str | Path, text_mode: str = "raw") -> pd.DataFrame:
+    df = pd.read_csv(resolve_data_path(path))
     required = [ID_COLUMN, *TEXT_COLUMNS]
     missing = [col for col in required if col not in df.columns]
     if missing:
